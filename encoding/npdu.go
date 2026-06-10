@@ -32,27 +32,26 @@ func (e *Encoder) NPDU(n *btypes.NPDU) {
 	}
 	e.write(meta)
 	if meta.HasDestination() {
-		n.Destination.SetLength()
-		e.write(n.Destination.Net)
+                e.writeUint16(n.Destination.Net)
+                // Address - write actual length
+                addrLen := uint8(len(n.Destination.Adr))
+                e.write(addrLen)
 
-		// Address
-		e.write(n.Destination.Len)
-
-		//qygeng:fix bug
-		if n.Destination.Len == uint8(len(n.Destination.Adr)) {
-			e.write(n.Destination.Adr)
-		} else if n.Destination.Len == uint8(len(n.Destination.Mac)) {
-			e.write(n.Destination.Mac[:4])
-			e.write(n.Destination.Id)
+                // Write address bytes
+                if len(n.Destination.Adr) > 0 {
+                        _, e.err = e.buff.Write(n.Destination.Adr)
+                } else if len(n.Destination.Mac) >= 4 {
+                        _, e.err = e.buff.Write(n.Destination.Mac[:4])
+                        e.write(n.Destination.Id)
 		}
 	}
 
 	if meta.HasSource() {
-		e.write(n.Source.Net)
-
-		// Address
-		e.write(n.Source.Len)
-		e.write(n.Source.Adr)
+                e.writeUint16(n.Source.Net)
+                // Address - write actual length
+                addrLen := uint8(len(n.Source.Adr))
+                e.write(addrLen)
+                _, e.err = e.buff.Write(n.Source.Adr)
 	}
 
 	// Hop count is after source
@@ -71,12 +70,10 @@ func (e *Encoder) NPDU(n *btypes.NPDU) {
 }
 
 func (d *Decoder) Address(a *btypes.Address) {
-	d.decode(&a.Net) //decode the network address
+	a.Net = d.decodeUint16()
 	d.decode(&a.Len)
-	// Make space for address
-	a.Adr = make([]uint8, a.Len) //decode the device hardware mac addr
-	d.decode(a.Adr)
-
+	a.Adr = make([]uint8, a.Len)
+	_, d.err = d.buff.Read(a.Adr)
 }
 
 type RouterToNetworkList struct {

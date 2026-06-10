@@ -3,7 +3,6 @@
 - [英文文档](README.md)
 - [中文文档](README_CN.md) (本文档)
 
-
 # BACnet 协议栈
 
 一个用 Go 语言实现的 BACnet/IP 协议栈，用于楼宇自动化和控制系统。
@@ -69,228 +68,198 @@ func main() {
 }
 ```
 
-### 读取模拟输入点位 (AI)
+---
+
+## 数据采集流程
+
+BACnet 数据采集过程包含六个关键步骤：
+
+### 步骤 1：客户端初始化
+
+在进行任何通信之前，必须使用适当的网络配置创建 BACnet 客户端。
 
 ```go
-// 读取模拟输入点位的当前值 (AI-1)
-func readAnalogInput(client bacnet.Client, device btypes.Device) {
-    result, err := client.ReadProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.AnalogInput, // 对象类型: 模拟输入
-                Instance: 1,                  // 点位编号: AI-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue, // 读取当前值
-                    ArrayIndex: btypes.ArrayAll,
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("读取 AI-1 失败: %v", err)
-        return
-    }
-
-    // 获取值
-    if len(result.Object.Properties) > 0 {
-        fmt.Printf("AI-1 当前值: %v\n", result.Object.Properties[0].Data)
-    }
+client, err := bacnet.NewClient(&bacnet.ClientBuilder{
+    Ip:         "192.168.1.100",  // 本地 IP 地址
+    SubnetCIDR: 24,                // 子网掩码（如 /24）
+    Port:       47808,             // BACnet 端口（默认：47808）
+})
+if err != nil {
+    log.Fatal(err)
 }
+defer client.Close()
 ```
 
-### 读取二进制输入点位 (BI)
+**配置选项：**
+- `Ip`：要绑定的本地 IP 地址
+- `Interface`：网络接口名称（替代 Ip）
+- `SubnetCIDR`：子网 CIDR 表示法（例如，24 表示 /24）
+- `Port`：BACnet UDP 端口（默认：47808 = 0xBAC0）
+- `MaxPDU`：最大 PDU 大小（默认：1476）
+
+### 步骤 2：启动消息循环
+
+必须在 goroutine 中启动客户端消息循环来处理传入消息：
 
 ```go
-// 读取二进制输入点位的当前值 (BI-1)
-func readBinaryInput(client bacnet.Client, device btypes.Device) {
-    result, err := client.ReadProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.BinaryInput, // 对象类型: 二进制输入
-                Instance: 1,                  // 点位编号: BI-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue,
-                    ArrayIndex: btypes.ArrayAll,
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("读取 BI-1 失败: %v", err)
-        return
-    }
-
-    if len(result.Object.Properties) > 0 {
-        value := result.Object.Properties[0].Data
-        state := "OFF"
-        if value == true || value == uint8(1) {
-            state = "ON"
-        }
-        fmt.Printf("BI-1 当前值: %s (%v)\n", state, value)
-    }
-}
+go client.ClientRun()
 ```
 
-### 写入模拟输出点位 (AO)
+**重要注意事项：**
+- 必须在进行任何请求之前调用
+- 持续运行直到客户端关闭
+- 处理消息解码和路由
+
+### 步骤 3：设备发现（WhoIs）
+
+使用 WhoIs 服务发现网络上的 BACnet 设备：
 
 ```go
-// 向模拟输出点位写入值 (AO-1)
-func writeAnalogOutput(client bacnet.Client, device btypes.Device, value float64) error {
-    err := client.WriteProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.AnalogOutput, // 对象类型: 模拟输出
-                Instance: 1,                   // 点位编号: AO-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue,
-                    ArrayIndex: btypes.ArrayAll,
-                    Data:       value,             // 要写入的值 (如 25.5)
-                    Priority:   btypes.Normal,    // 优先级
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("写入 AO-1 失败: %v", err)
-        return err
-    }
-
-    fmt.Printf("成功写入 %.2f 到 AO-1\n", value)
-    return nil
-}
+devices, err := client.WhoIs(&bacnet.WhoIsOpts{
+    Low:  0,             // 设备 ID 下限
+    High: 4194304,       // 设备 ID 上限（最大值）
+})
 ```
 
-### 写入二进制输出点位 (BO)
+**发现选项：**
+- `Low`：设备 ID 范围的下限（0 到 4194304）
+- `High`：设备 ID 范围的上限
+- `GlobalBroadcast`：使用全局广播地址（0xFFFF）
+- `Destination`：单播发现的特定目标地址
+
+**最佳实践：**
+- 使用窄 ID 范围进行目标发现以减少网络流量
+- 在大型网络上避免使用全范围（0-4194304）
+- 缓存发现的设备以避免重复发现
+
+### 步骤 4：对象发现
+
+从发现的设备检索所有对象：
 
 ```go
-// 向二进制输出点位写入值 (BO-1)
-func writeBinaryOutput(client bacnet.Client, device btypes.Device, value bool) error {
-    err := client.WriteProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.BinaryOutput, // 对象类型: 二进制输出
-                Instance: 1,                   // 点位编号: BO-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue,
-                    ArrayIndex: btypes.ArrayAll,
-                    Data:       value,           // true = ON, false = OFF
-                    Priority:   btypes.Normal,   // 优先级
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("写入 BO-1 失败: %v", err)
-        return err
-    }
-
-    fmt.Printf("成功写入 %v 到 BO-1\n", value)
-    return nil
+scannedDevice, err := client.Objects(devices[0])
+if err != nil {
+    log.Printf("扫描对象失败: %v", err)
+    return
 }
+
+// 访问特定对象类型
+aiObjects := scannedDevice.Objects[btypes.AnalogInput]
+biObjects := scannedDevice.Objects[btypes.BinaryInput]
+aoObjects := scannedDevice.Objects[btypes.AnalogOutput]
+boObjects := scannedDevice.Objects[btypes.BinaryOutput]
 ```
 
-### 批量读取多个点位属性
+**支持的对象类型：**
+- `AnalogInput` (0)：模拟输入点（如温度传感器）
+- `AnalogOutput` (1)：模拟输出点（如阀门、风门）
+- `AnalogValue` (2)：模拟值对象
+- `BinaryInput` (3)：二进制输入点（如触点传感器）
+- `BinaryOutput` (4)：二进制输出点（如继电器）
+- `BinaryValue` (5)：二进制值对象
+- `Device` (8)：BACnet 设备对象
+- `MultiStateInput` (13)：多状态输入点
+- `MultiStateOutput` (14)：多状态输出点
+- `TrendLog` (20)：趋势日志对象
+
+### 步骤 5：数据读取
+
+从设备对象读取属性值。
+
+#### 读取单个属性
 
 ```go
-// 一次请求读取多个对象的多个属性
-func readMultiplePoints(client bacnet.Client, device btypes.Device) {
-    result, err := client.ReadMultiProperty(device, btypes.MultiplePropertyData{
-        Objects: []btypes.Object{
-            // 读取 AI-1 的当前值和单位
+result, err := client.ReadProperty(device, btypes.PropertyData{
+    Object: btypes.Object{
+        ID: btypes.ObjectID{
+            Type:     btypes.AnalogInput,
+            Instance: 1,
+        },
+        Properties: []btypes.Property{
             {
-                ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 1},
-                Properties: []btypes.Property{
-                    {Type: btypes.PropPresentValue},
-                    {Type: btypes.PropUnits},
-                },
-            },
-            // 读取 AI-2 的当前值
-            {
-                ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 2},
-                Properties: []btypes.Property{
-                    {Type: btypes.PropPresentValue},
-                },
-            },
-            // 读取 BI-1 的当前值
-            {
-                ID: btypes.ObjectID{Type: btypes.BinaryInput, Instance: 1},
-                Properties: []btypes.Property{
-                    {Type: btypes.PropPresentValue},
-                },
+                Type:       btypes.PropPresentValue,
+                ArrayIndex: btypes.ArrayAll,
             },
         },
-    })
-    if err != nil {
-        log.Printf("批量读取属性失败: %v", err)
-        return
-    }
-
-    // 处理结果
-    for _, obj := range result.Objects {
-        fmt.Printf("对象: %s-%d\n", obj.ID.Type, obj.ID.Instance)
-        for _, prop := range obj.Properties {
-            fmt.Printf("  %s: %v\n", prop.Type, prop.Data)
-        }
-    }
-}
+    },
+})
 ```
 
-### 扫描设备所有对象
+#### 批量读取多个属性
+
+为了获得更好的性能，使用 ReadMultiProperty 在一个请求中读取多个属性：
 
 ```go
-// 扫描设备中的所有对象
-func scanDeviceObjects(client bacnet.Client, device btypes.Device) error {
-    // 获取设备中的所有对象
-    scannedDevice, err := client.Objects(device)
-    if err != nil {
-        return fmt.Errorf("扫描对象失败: %v", err)
-    }
-
-    fmt.Printf("在设备 %d 中发现 %d 个对象\n", device.DeviceID, scannedDevice.Objects.Len())
-
-    // 遍历所有对象类型
-    objectTypes := []btypes.ObjectType{
-        btypes.AnalogInput,
-        btypes.AnalogOutput,
-        btypes.AnalogValue,
-        btypes.BinaryInput,
-        btypes.BinaryOutput,
-        btypes.BinaryValue,
-    }
-
-    for _, objType := range objectTypes {
-        objects := scannedDevice.Objects[objType]
-        if len(objects) == 0 {
-            continue
-        }
-
-        fmt.Printf("\n%s 对象:\n", objType)
-        for instance, obj := range objects {
-            fmt.Printf("  实例 %d: Name=%q\n", instance, obj.Name)
-        }
-    }
-
-    return nil
-}
+result, err := client.ReadMultiProperty(device, btypes.MultiplePropertyData{
+    Objects: []btypes.Object{
+        {
+            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 1},
+            Properties: []btypes.Property{
+                {Type: btypes.PropPresentValue},
+                {Type: btypes.PropUnits},
+                {Type: btypes.PropDescription},
+            },
+        },
+        {
+            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 2},
+            Properties: []btypes.Property{
+                {Type: btypes.PropPresentValue},
+            },
+        },
+    },
+})
 ```
 
-### 完整设备集成流程
+**常用属性：**
+- `PropPresentValue` (85)：对象的当前值
+- `PropUnits` (117)：工程单位
+- `PropDescription` (28)：对象描述
+- `PropObjectName` (77)：对象名称
+- `PropObjectType` (79)：对象类型
+- `PropObjectIdentifier` (75)：对象标识符
+- `PropObjectList` (76)：设备中的对象列表
+
+### 步骤 6：数据写入
+
+向设备对象写入值。
 
 ```go
-// 完整流程: 发现设备 -> 扫描对象 -> 读取值 -> 写入值
+err := client.WriteProperty(device, btypes.PropertyData{
+    Object: btypes.Object{
+        ID: btypes.ObjectID{
+            Type:     btypes.AnalogOutput,
+            Instance: 1,
+        },
+        Properties: []btypes.Property{
+            {
+                Type:       btypes.PropPresentValue,
+                ArrayIndex: btypes.ArrayAll,
+                Data:       float64(25.5),
+                Priority:   btypes.Normal,
+            },
+        },
+    },
+})
+```
+
+**写入优先级级别：**
+- `LifeSafety` (3)：生命安全操作
+- `CriticalEquipment` (2)：关键设备控制
+- `Urgent` (1)：紧急操作
+- `Normal` (0)：正常操作
+
+---
+
+## 高级用法
+
+### 完整集成流程
+
+```go
 func completeIntegration(client bacnet.Client) error {
-    // 步骤 1: 发现设备
+    // 步骤 1：发现设备
     devices, err := client.WhoIs(&bacnet.WhoIsOpts{
-        Low:  2228316,
-        High: 2228316,
+        Low:  0,
+        High: 4194304,
     })
     if err != nil {
         return fmt.Errorf("WhoIs 失败: %v", err)
@@ -302,26 +271,26 @@ func completeIntegration(client bacnet.Client) error {
     device := devices[0]
     fmt.Printf("发现设备: ID=%d, IP=%s:%d\n", device.DeviceID, device.Ip, device.Port)
 
-    // 步骤 2: 扫描对象
+    // 步骤 2：扫描对象
     scannedDevice, err := client.Objects(device)
     if err != nil {
         return fmt.Errorf("对象扫描失败: %v", err)
     }
 
-    // 步骤 3: 查找目标点位
+    // 步骤 3：查找目标点位
     aiObjects := scannedDevice.Objects[btypes.AnalogInput]
-    targetPoint, ok := aiObjects[0] // AnalogInput:0
+    targetPoint, ok := aiObjects[1]
     if !ok {
-        return fmt.Errorf("未找到目标点位 AnalogInput:0")
+        return fmt.Errorf("未找到目标点位")
     }
     fmt.Printf("发现目标点位: %s\n", targetPoint.Name)
 
-    // 步骤 4: 读取当前值
+    // 步骤 4：读取当前值
     result, err := client.ReadProperty(device, btypes.PropertyData{
         Object: btypes.Object{
             ID: btypes.ObjectID{
                 Type:     btypes.AnalogInput,
-                Instance: 0,
+                Instance: 1,
             },
             Properties: []btypes.Property{
                 {Type: btypes.PropPresentValue},
@@ -333,7 +302,7 @@ func completeIntegration(client bacnet.Client) error {
     }
     fmt.Printf("当前值: %v\n", result.Object.Properties[0].Data)
 
-    // 步骤 5: 写入 AnalogValue
+    // 步骤 5：写入 AnalogValue
     writeErr := client.WriteProperty(device, btypes.PropertyData{
         Object: btypes.Object{
             ID: btypes.ObjectID{
@@ -358,6 +327,48 @@ func completeIntegration(client bacnet.Client) error {
     return nil
 }
 ```
+
+### 带超时的读取
+
+使用超时变体更好地控制请求时序：
+
+```go
+result, err := client.ReadPropertyWithTimeout(device, propertyData, 5*time.Second)
+```
+
+### 错误处理模式
+
+```go
+func safeReadProperty(client bacnet.Client, device btypes.Device, objID btypes.ObjectID) (interface{}, error) {
+    result, err := client.ReadProperty(device, btypes.PropertyData{
+        Object: btypes.Object{
+            ID: objID,
+            Properties: []btypes.Property{
+                {Type: btypes.PropPresentValue},
+            },
+        },
+    })
+    
+    if err != nil {
+        // 处理特定错误类型
+        if strings.Contains(err.Error(), "timeout") {
+            return nil, fmt.Errorf("设备 %d 未响应", device.DeviceID)
+        }
+        if strings.Contains(err.Error(), "no such object") {
+            return nil, fmt.Errorf("对象 %s 未找到", objID.Type)
+        }
+        return nil, err
+    }
+    
+    if len(result.Object.Properties) == 0 {
+        return nil, fmt.Errorf("未返回属性")
+    }
+    
+    return result.Object.Properties[0].Data, nil
+}
+```
+
+---
 
 ## API 参考
 
@@ -398,390 +409,11 @@ type WhoIsOpts struct {
     High            int             // 设备 ID 上限
     GlobalBroadcast bool            // 使用全局广播 (0xFFFF)
     NetworkNumber   uint16          // 目标网络号
-    Destination     *btypes.Address // 特定目标地址 (可选)
+    Destination     *btypes.Address // 特定目标地址（可选）
 }
 ```
 
-### 属性读取
-
-```go
-// 从设备读取单个属性
-result, err := client.ReadProperty(device, btypes.PropertyData{
-    Object: btypes.Object{
-        ID: btypes.ObjectID{
-            Type:     btypes.AnalogInput,
-            Instance: 1,
-        },
-        Properties: []btypes.Property{
-            {
-                Type:       btypes.PropPresentValue,
-                ArrayIndex: btypes.ArrayAll,
-            },
-        },
-    },
-})
-
-// 从多个对象读取多个属性
-result, err := client.ReadMultiProperty(device, btypes.MultiplePropertyData{
-    Objects: []btypes.Object{
-        {
-            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 1},
-            Properties: []btypes.Property{
-                {Type: btypes.PropPresentValue},
-                {Type: btypes.PropUnits},
-            },
-        },
-        {
-            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 2},
-            Properties: []btypes.Property{
-                {Type: btypes.PropPresentValue},
-            },
-        },
-    },
-})
-```
-
-### 属性写入
-
-```go
-// 向设备写入属性
-err := client.WriteProperty(device, btypes.PropertyData{
-    Object: btypes.Object{
-        ID: btypes.ObjectID{
-            Type:     btypes.AnalogOutput,
-            Instance: 1,
-        },
-        Properties: []btypes.Property{
-            {
-                Type:       btypes.PropPresentValue,
-                ArrayIndex: btypes.ArrayAll,
-                Data:       float64(25.5),
-                Priority:   btypes.Normal,
-            },
-        },
-    },
-})
-```
-
-## 内部架构与调用流程
-
-### 1. 客户端初始化流程
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     NewClient()                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  1. 验证 IP 地址                                                │
-│     └─ validation.ValidIP(ip)                                   │
-│                                                                 │
-│  2. 验证端口 (默认: 47808)                                      │
-│     └─ validation.ValidPort(port)                               │
-│                                                                 │
-│  3. 创建数据链路层                                              │
-│     ├─ NewUDPDataLink(iface, port)         // 通过接口名        │
-│     └─ NewUDPDataLinkFromIP(ip, subnet, port) // 通过 IP        │
-│                                                                 │
-│  4. 初始化 TSM (事务状态机)                                     │
-│     └─ tsm.New(defaultStateSize)                                │
-│                                                                 │
-│  5. 初始化 UTSM (非确认事务管理器)                              │
-│     └─ utsm.NewManager(...)                                     │
-│                                                                 │
-│  6. 创建缓冲区池                                                │
-│     └─ sync.Pool 用于接收缓冲区                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 2. WhoIs 设备发现流程
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     WhoIs()                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  1. 确定广播目标地址                                            │
-│     ├─ GetBroadcastAddress()                                    │
-│     └─ 如果提供了自定义目标则覆盖                               │
-│                                                                 │
-│  2. 编码 NPDU (网络层协议数据单元)                              │
-│     ├─ Version: 1                                               │
-│     ├─ Destination: 广播地址                                    │
-│     ├─ Source: 本地地址                                         │
-│     └─ ExpectingReply: false (广播)                             │
-│                                                                 │
-│  3. 编码 WhoIs 服务数据                                         │
-│     ├─ 低设备 ID                                                │
-│     └─ 高设备 ID                                                │
-│                                                                 │
-│  4. 订阅 UTSM 接收 IAm 响应                                     │
-│     └─ utsm.Subscribe(start, end)                               │
-│                                                                 │
-│  5. 异步发送广播请求                                            │
-│     └─ go c.Send(dest, npdu, data, nil)                         │
-│                                                                 │
-│  6. 收集并去重响应                                              │
-│     ├─ 过滤 IAm 响应                                            │
-│     ├─ 按设备实例 ID 去重                                       │
-│     └─ 构建设备列表                                             │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 3. ReadProperty 流程 (确认服务)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     ReadProperty()                              │
-├─────────────────────────────────────────────────────────────────┤
-│  1. 从 TSM 获取事务 ID                                          │
-│     └─ tsm.ID(ctx)                                              │
-│                                                                 │
-│  2. 构建 NPDU                                                   │
-│     ├─ Destination: 设备地址                                    │
-│     ├─ Source: 本地地址                                         │
-│     └─ ExpectingReply: true                                     │
-│                                                                 │
-│  3. 编码 APDU (确认服务请求)                                    │
-│     ├─ DataType: ConfirmedServiceRequest                        │
-│     ├─ Service: ServiceConfirmedReadProperty                    │
-│     ├─ InvokeId: 事务 ID                                        │
-│     └─ Service Data: 对象 ID + 属性 ID                          │
-│                                                                 │
-│  4. 发送请求并重试                                              │
-│     ├─ c.Send(dest, npdu, data, nil)                            │
-│     ├─ tsm.Receive(id, timeout)                                 │
-│     └─ 最多重试 retryCount 次                                   │
-│                                                                 │
-│  5. 解码响应                                                    │
-│     ├─ 解码 APDU 头部                                           │
-│     ├─ 检查错误                                                 │
-│     └─ 解码属性值                                               │
-│                                                                 │
-│  6. 释放事务 ID                                                 │
-│     └─ tsm.Put(id)                                              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 4. WriteProperty 流程 (确认服务)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     WriteProperty()                             │
-├─────────────────────────────────────────────────────────────────┤
-│  1. 从 TSM 获取事务 ID                                          │
-│     └─ tsm.ID(ctx)                                              │
-│                                                                 │
-│  2. 构建 NPDU                                                   │
-│     ├─ Destination: 设备地址                                    │
-│     ├─ Source: 本地地址                                         │
-│     └─ ExpectingReply: true                                     │
-│                                                                 │
-│  3. 编码 APDU (确认服务请求)                                    │
-│     ├─ DataType: ConfirmedServiceRequest                        │
-│     ├─ Service: ServiceConfirmedWriteProperty                   │
-│     ├─ InvokeId: 事务 ID                                        │
-│     └─ Service Data: 对象 ID + 属性 ID + 值                     │
-│                                                                 │
-│  4. 发送请求并重试                                              │
-│     ├─ c.Send(dest, npdu, data, nil)                            │
-│     ├─ tsm.Receive(id, timeout)                                 │
-│     └─ 最多重试 2 次                                            │
-│                                                                 │
-│  5. 解码响应                                                    │
-│     ├─ 解码 APDU 头部                                           │
-│     ├─ 检查 SimpleAck (成功)                                    │
-│     └─ 检查 Error PDU                                           │
-│                                                                 │
-│  6. 释放事务 ID                                                 │
-│     └─ tsm.Put(id)                                              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 5. 消息接收流程
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     ClientRun()                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  循环:                                                          │
-│  1. 从池中获取缓冲区                                            │
-│     └─ readBufferPool.Get()                                     │
-│                                                                 │
-│  2. 从数据链路层接收数据                                        │
-│     └─ dataLink.Receive(buffer)                                 │
-│                                                                 │
-│  3. 并发处理消息                                                │
-│     └─ go handleMsg(addr, data)                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     handleMsg()                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  1. 解码 BVLC (BACnet 虚拟链路控制)                             │
-│     ├─ Type: BVLCTypeBacnetIP                                   │
-│     ├─ Function: Broadcast/Unicast/ForwardedNPDU                │
-│     └─ Length: 数据包长度                                       │
-│                                                                 │
-│  2. 解码 NPDU                                                   │
-│     ├─ Version                                                  │
-│     ├─ 源/目标地址                                              │
-│     └─ 网络层消息处理                                           │
-│                                                                 │
-│  3. 解码 APDU 并路由到处理器                                    │
-│     ├─ UnconfirmedServiceRequest                                │
-│     │   ├─ IAm → utsm.Publish()                                 │
-│     │   └─ WhoIs → (忽略或响应)                                 │
-│     ├─ SimpleAck → tsm.Send()                                   │
-│     ├─ ComplexAck → tsm.Send()                                  │
-│     ├─ ConfirmedServiceRequest → tsm.Send()                     │
-│     └─ Error → tsm.Send(error)                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 6. 事务状态机 (TSM)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     TSM 架构                                    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐      │
-│   │   调用者    │────▶│  TSM.ID()   │────▶│   状态      │      │
-│   │  (请求)     │     │  (获取 ID)  │     │  (活动)     │      │
-│   └─────────────┘     └─────────────┘     └──────┬──────┘      │
-│                                                  │              │
-│                                                  ▼              │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐      │
-│   │   调用者    │◀────│ TSM.Put()   │◀────│   状态      │      │
-│   │  (清理)     │     │ (释放)      │     │ (完成)      │      │
-│   └─────────────┘     └─────────────┘     └─────────────┘      │
-│                                                  ▲              │
-│                                                  │              │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐      │
-│   │   handleMsg │────▶│ TSM.Send()  │────▶│   数据      │      │
-│   │  (响应)     │     │ (传递)      │     │  通道       │      │
-│   └─────────────┘     └─────────────┘     └─────────────┘      │
-│                                                                 │
-│  关键组件:                                                      │
-│  - states: map[int]*state (活动事务)                            │
-│  - free.id: channel (可用调用 ID 1-254)                         │
-│  - free.space: channel (并发事务限制)                           │
-│  - pool: sync.Pool (状态对象复用)                               │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 7. 协议栈分层
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    应用层                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  服务: WhoIs, IAm, ReadProperty, WriteProperty          │   │
-│  │  对象: Device, AnalogInput, BinaryOutput, 等            │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                   表示层                                        │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  编码器: APDU, NPDU, BVLC 编码                          │   │
-│  │  解码器: APDU, NPDU, BVLC 解码                          │   │
-│  │  类型: ObjectID, Property, Address                      │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                     网络层                                      │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  NPDU: 网络层协议数据单元                               │   │
-│  │  - 源/目标寻址                                          │   │
-│  │  - 跳数、优先级、网络号                                 │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                   数据链路层                                    │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  BVLC: BACnet 虚拟链路控制                              │   │
-│  │  UDP:  UDP 套接字通信                                   │   │
-│  │  MS/TP: 主从/令牌传递 (可选)                            │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                    物理层                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  以太网/IP 网络                                         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## 支持的 BACnet 服务
-
-### 确认服务
-- ReadProperty (12) - 读取属性
-- ReadPropertyMultiple (14) - 批量读取属性
-- WriteProperty (15) - 写入属性
-- WritePropertyMultiple (16) - 批量写入属性
-
-### 非确认服务
-- IAm (0) - 我是（设备响应）
-- WhoIs (8) - 谁是（设备发现）
-
-## 对象类型
-
-| 类型 | 代码 | 描述 |
-|------|------|------|
-| AnalogInput | 0 | 模拟输入点 |
-| AnalogOutput | 1 | 模拟输出点 |
-| AnalogValue | 2 | 模拟值 |
-| BinaryInput | 3 | 二进制输入点 |
-| BinaryOutput | 4 | 二进制输出点 |
-| BinaryValue | 5 | 二进制值 |
-| Device | 8 | BACnet 设备 |
-| MultiStateInput | 13 | 多状态输入 |
-| MultiStateOutput | 14 | 多状态输出 |
-| TrendLog | 20 | 趋势日志 |
-
-## 属性类型 (常用)
-
-| 属性 | 代码 | 描述 |
-|------|------|------|
-| PresentValue | 85 | 对象当前值 |
-| Units | 117 | 工程单位 |
-| Description | 28 | 对象描述 |
-| ObjectName | 77 | 对象名称 |
-| ObjectType | 79 | 对象类型 |
-| ObjectIdentifier | 75 | 对象标识符 |
-| ObjectList | 76 | 设备中的对象列表 |
-
-## 架构
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     应用层                                  │
-│  WhoIs | ReadProperty | WriteProperty | Objects            │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     表示层                                  │
-│           编码器 / 解码器 (APDU/NPDU/BVLC)                 │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     网络层                                  │
-│              寻址、路由、优先级                             │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   数据链路层                                │
-│                    UDP / MS/TP                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## 事务管理
-
-### TSM (事务状态机)
-处理需要确认的确认服务。使用基于通道的通信进行请求/响应匹配。
-
-### UTSM (非确认事务状态机)
-处理非确认服务如 WhoIs/IAm。使用发布/订阅模式处理广播响应。
+---
 
 ## 配置
 
@@ -789,16 +421,16 @@ err := client.WriteProperty(device, btypes.PropertyData{
 
 ```go
 type ClientBuilder struct {
-    DataLink   datalink.DataLink // 自定义数据链路 (可选)
-    Interface  string            // 网络接口名 (如 "eth0")
+    DataLink   datalink.DataLink // 自定义数据链路（可选）
+    Interface  string            // 网络接口名（如 "eth0"）
     Ip         string            // IP 地址
-    Port       int               // BACnet 端口 (默认: 47808)
-    SubnetCIDR int               // 子网 CIDR (如 24 表示 /24)
-    MaxPDU     uint16            // 最大 PDU 大小 (默认: 1476)
+    Port       int               // BACnet 端口（默认：47808）
+    SubnetCIDR int               // 子网 CIDR（如 24 表示 /24）
+    MaxPDU     uint16            // 最大 PDU 大小（默认：1476）
 }
 ```
 
-## 常量
+### 常量
 
 ```go
 // 协议
@@ -818,70 +450,112 @@ const (
 )
 ```
 
-## 使用注意事项
+---
+
+## 最佳实践与建议
 
 ### 网络注意事项
 
-1. **端口绑定**:
+1. **端口绑定**：
    - 默认 BACnet 端口是 47808 (0xBAC0)
-   - 当在同一机器上与模拟器测试时，使用不同端口进行发现和确认服务以避免端口冲突
-   - 示例: 使用端口 47808 进行 WhoIs 发现，然后切换到 47809 进行 ReadProperty/WriteProperty 操作
+   - 测试时使用不同端口避免冲突
+   - 绑定到 `0.0.0.0` 监听所有接口
 
-2. **IP 地址绑定**:
-   - 绑定到 `0.0.0.0` 以监听所有接口
+2. **IP 地址绑定**：
    - 避免绑定到目标设备的 IP 地址
-   - 对于多子网环境，确保正确配置子网 CIDR
+   - 对于多子网环境，正确配置子网 CIDR
 
-3. **广播行为**:
+3. **广播行为**：
    - WhoIs 默认使用广播
-   - 使用 `WhoIsOpts.Destination` 进行单播 WhoIs 请求
+   - 使用 `Destination` 进行单播请求
    - 广播可能无法跨 VLAN 或子网工作
+
+### 性能优化
+
+1. **批量操作**：
+   - 使用 `ReadMultiProperty` 读取多个属性
+   - 减少网络往返次数
+   - 根据设备的 MaxAPDU 设置限制批处理大小
+
+2. **并发**：
+   - 客户端支持并发操作的线程安全设计
+   - TSM 限制并发确认事务数（默认：10）
+   - 考虑对高频操作进行速率限制
+
+3. **内存管理**：
+   - 使用缓冲池提高内存使用效率
+   - 使用 `client.Close()` 及时释放资源
 
 ### 错误处理
 
-1. **超时处理**:
+1. **超时处理**：
    - 使用 `ReadPropertyWithTimeout` 进行显式超时控制
    - 确认服务包含带指数退避的重试逻辑
-   - 非确认服务没有重试机制
+   - 为关键操作实现应用级重试
 
-2. **常见错误**:
-   - `timeout`: 设备未在超时时间内响应
-   - `invalid argument`: 无效的对象类型或属性 ID
-   - `no such object`: 请求的对象在设备上不存在
-   - `access denied`: 写入操作权限不足
+2. **常见错误**：
+   - `timeout`：设备未在超时时间内响应
+   - `invalid argument`：无效的对象类型或属性 ID
+   - `no such object`：请求的对象不存在
+   - `access denied`：写入操作权限不足
 
-3. **重试策略**:
-   - 确认服务默认最多重试 2 次
-   - 对于关键操作，考虑实现应用级重试
+---
 
-### 性能考虑
+## 常见问题与故障排除
 
-1. **批量操作**:
-   - 使用 `ReadMultiProperty` 一次性读取多个属性
-   - 这减少了网络往返次数并提高性能
-   - 根据设备的 MaxAPDU 设置限制批处理大小
+### 问题 1：未发现设备
 
-2. **并发**:
-   - 客户端支持并发操作的线程安全设计
-   - TSM 限制并发确认事务数 (默认: 10)
-   - 考虑对高频操作进行速率限制
+**可能原因：**
+- IP 地址或子网配置错误
+- 防火墙阻止了 BACnet 端口（47808）
+- 设备在不同的 VLAN/子网
+- 客户端未运行（`ClientRun()` 未调用）
 
-3. **内存管理**:
-   - 使用缓冲池提高内存使用效率
+**解决方案：**
+- 验证网络配置
+- 检查防火墙规则
+- 使用 Wireshark 监控 BACnet 流量
+- 确保在 `WhoIs()` 之前调用 `ClientRun()`
 
-### 最佳实践
+### 问题 2：ReadProperty 超时失败
 
-1. **资源管理**:
-   - 始终使用 `defer client.Close()` 释放资源
-   - 在完成操作后及时关闭客户端
+**可能原因：**
+- 设备未响应
+- 设备地址不正确
+- 网络连接问题
+- 设备繁忙或过载
 
-2. **错误处理**:
-   - 检查所有 API 调用的错误返回值
-   - 实现适当的重试和超时逻辑
+**解决方案：**
+- 通过 ping 验证设备可达性
+- 检查设备地址（某些设备使用不同端口进行确认服务）
+- 增加超时值
+- 实现重试逻辑
 
-3. **日志记录**:
-   - 记录关键操作和错误
-   - 监控性能指标如 RTT 和成功率
+### 问题 3：WriteProperty 返回 "Access Denied"
+
+**可能原因：**
+- 权限不足
+- 设备上启用了写保护
+- 优先级级别不正确
+
+**解决方案：**
+- 检查设备配置中的写权限
+- 验证优先级级别（使用适当的优先级）
+- 联系设备制造商获取访问权限
+
+### 问题 4：网络流量过高
+
+**可能原因：**
+- 使用全 ID 范围的频繁 WhoIs 请求
+- 批量操作超过 MTU
+- 广播风暴
+
+**解决方案：**
+- 使用窄 ID 范围的目标 WhoIs
+- 将批处理大小限制在 MaxAPDU 范围内
+- 实现设备发现缓存
+
+---
 
 ## 测试
 
@@ -895,7 +569,6 @@ go test -v ./network/...
 # 运行验收测试
 go test -v -run Acceptance
 ```
-
 
 ## 许可证
 

@@ -37,6 +37,56 @@ func (e *Encoder) write(p interface{}) {
 	e.err = binary.Write(e.buff, EncodingEndian, p)
 }
 
+// writeUint16 writes a uint16 in an alignment-safe manner
+func (e *Encoder) writeUint16(v uint16) {
+	if e.err != nil {
+		return
+	}
+	b := make([]byte, 2)
+	writeUint16(b, v)
+	_, e.err = e.buff.Write(b)
+}
+
+// writeUint32 writes a uint32 in an alignment-safe manner
+func (e *Encoder) writeUint32(v uint32) {
+	if e.err != nil {
+		return
+	}
+	b := make([]byte, 4)
+	writeUint32(b, v)
+	_, e.err = e.buff.Write(b)
+}
+
+// writeInt32 writes an int32 in an alignment-safe manner
+func (e *Encoder) writeInt32(v int32) {
+	if e.err != nil {
+		return
+	}
+	b := make([]byte, 4)
+	writeInt32(b, v)
+	_, e.err = e.buff.Write(b)
+}
+
+// writeFloat32 writes a float32 in an alignment-safe manner
+func (e *Encoder) writeFloat32(v float32) {
+	if e.err != nil {
+		return
+	}
+	b := make([]byte, 4)
+	writeFloat32(b, v)
+	_, e.err = e.buff.Write(b)
+}
+
+// writeFloat64 writes a float64 in an alignment-safe manner
+func (e *Encoder) writeFloat64(v float64) {
+	if e.err != nil {
+		return
+	}
+	b := make([]byte, 8)
+	writeFloat64(b, v)
+	_, e.err = e.buff.Write(b)
+}
+
 func (e *Encoder) contextObjectID(tagNum uint8, objectType btypes.ObjectType, instance btypes.ObjectInstance) {
 	/* length of object id is 4 octets, as per 20.2.14 */
 	e.tag(tagInfo{ID: tagNum, Context: true, Value: 4})
@@ -107,10 +157,10 @@ func (e *Encoder) tag(tg tagInfo) {
 			e.write(uint8(tg.Value))
 		} else if tg.Value <= 65535 {
 			e.write(flag16bit)
-			e.write(uint16(tg.Value))
+			e.writeUint16(uint16(tg.Value))
 		} else {
 			e.write(flag32bit)
-			e.write(tg.Value)
+			e.writeUint32(tg.Value)
 		}
 	}
 }
@@ -123,7 +173,7 @@ returns the number of apdu bytes consumed
 func (e *Encoder) objectId(objectType btypes.ObjectType, instance btypes.ObjectInstance) {
 	var value uint32
 	value = ((uint32(objectType) & MaxObject) << InstanceBits) | (uint32(instance) & MaxInstance)
-	e.write(value)
+	e.writeUint32(value)
 }
 
 func (e *Encoder) contextEnumerated(tagNumber uint8, value uint32) {
@@ -151,12 +201,12 @@ func (e *Encoder) unsigned(value uint32) {
 	if value < 0x100 {
 		e.write(uint8(value))
 	} else if value < 0x10000 {
-		e.write(uint16(value))
+		e.writeUint16(uint16(value))
 	} else if value < 0x1000000 {
 		// Really!? 24 bits?
 		e.unsigned24(value)
 	} else {
-		e.write(value)
+		e.writeUint32(value)
 	}
 }
 

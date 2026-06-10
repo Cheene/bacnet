@@ -7,18 +7,53 @@ import (
 	"github.com/anviod/bacnet/encoding"
 )
 
+// WhoIsOpts contains options for the WhoIs device discovery request.
+//
+// 中文说明：WhoIsOpts 包含 WhoIs 设备发现请求的选项。
 type WhoIsOpts struct {
-	Low             int             `json:"low"`
-	High            int             `json:"high"`
-	GlobalBroadcast bool            `json:"global_broadcast"`
-	NetworkNumber   uint16          `json:"network_number"`
-	Destination     *btypes.Address `json:"-"`
+	Low             int             `json:"low"`              // Lower bound of device ID range (0 to 4194304)
+	High            int             `json:"high"`             // Upper bound of device ID range
+	GlobalBroadcast bool            `json:"global_broadcast"` // Use global broadcast (0xFFFF)
+	NetworkNumber   uint16          `json:"network_number"`   // Target network number
+	Destination     *btypes.Address `json:"-"`                // Specific destination address (optional)
 }
 
-// WhoIs finds all devices with ids between the provided low and high values.
-// Use constant ArrayAll for both fields to scan the entire network at once.
-// Using ArrayAll is highly discouraged for most networks since it can lead
-// to a highly congested network.
+// WhoIs discovers all BACnet devices on the network within the specified device ID range.
+// It sends a broadcast WhoIs request and collects IAm responses from devices.
+// The response includes device information such as Device ID, IP address, port,
+// MaxAPDU size, segmentation support, and vendor ID.
+//
+// Parameters:
+//
+//	wh - WhoIsOpts containing the device ID range and other options
+//
+// Returns:
+//
+//	A list of discovered devices and any error encountered.
+//
+// Usage Notes:
+//   - Use Low=0 and High=4194304 to discover all devices
+//   - Specify a narrow range for targeted discovery to reduce network traffic
+//   - Use Destination for unicast WhoIs requests
+//   - The function handles duplicate device responses automatically
+//
+// 中文说明：WhoIs 发现网络上指定设备ID范围内的所有BACnet设备。
+// 发送广播 WhoIs 请求并收集设备的 IAm 响应。
+// 响应包括设备信息，如设备ID、IP地址、端口、MaxAPDU大小、分段支持和供应商ID。
+//
+// 参数：
+//
+//	wh - 包含设备ID范围和其他选项的 WhoIsOpts
+//
+// 返回：
+//
+//	发现的设备列表和遇到的任何错误。
+//
+// 使用注意：
+//   - 使用 Low=0 和 High=4194304 发现所有设备
+//   - 指定窄范围进行目标发现以减少网络流量
+//   - 使用 Destination 进行单播 WhoIs 请求
+//   - 函数自动处理重复设备响应
 func (c *client) WhoIs(wh *WhoIsOpts) ([]btypes.Device, error) {
 	dest := *c.dataLink.GetBroadcastAddress()
 	if wh.Destination != nil {

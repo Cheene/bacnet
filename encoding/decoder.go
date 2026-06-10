@@ -56,6 +56,71 @@ func (d *Decoder) decode(data interface{}) {
 	d.err = binary.Read(d.buff, EncodingEndian, data)
 }
 
+// decodeUint16 reads a uint16 in an alignment-safe manner
+func (d *Decoder) decodeUint16() uint16 {
+	if d.err != nil {
+		return 0
+	}
+	b := make([]byte, 2)
+	_, d.err = d.buff.Read(b)
+	if d.err != nil {
+		return 0
+	}
+	return readUint16(b)
+}
+
+// decodeUint32 reads a uint32 in an alignment-safe manner
+func (d *Decoder) decodeUint32() uint32 {
+	if d.err != nil {
+		return 0
+	}
+	b := make([]byte, 4)
+	_, d.err = d.buff.Read(b)
+	if d.err != nil {
+		return 0
+	}
+	return readUint32(b)
+}
+
+// decodeInt32 reads an int32 in an alignment-safe manner
+func (d *Decoder) decodeInt32() int32 {
+	if d.err != nil {
+		return 0
+	}
+	b := make([]byte, 4)
+	_, d.err = d.buff.Read(b)
+	if d.err != nil {
+		return 0
+	}
+	return readInt32(b)
+}
+
+// decodeFloat32 reads a float32 in an alignment-safe manner
+func (d *Decoder) decodeFloat32() float32 {
+	if d.err != nil {
+		return 0
+	}
+	b := make([]byte, 4)
+	_, d.err = d.buff.Read(b)
+	if d.err != nil {
+		return 0
+	}
+	return readFloat32(b)
+}
+
+// decodeFloat64 reads a float64 in an alignment-safe manner
+func (d *Decoder) decodeFloat64() float64 {
+	if d.err != nil {
+		return 0
+	}
+	b := make([]byte, 8)
+	_, d.err = d.buff.Read(b)
+	if d.err != nil {
+		return 0
+	}
+	return readFloat64(b)
+}
+
 // contexTag decoder
 
 // Returns both a tag and additional metadata stored in this byte. If it is of
@@ -104,8 +169,7 @@ func (d *Decoder) tagNumberAndValue() (tag uint8, meta tagMeta, value uint32) {
 }
 
 func (d *Decoder) objectId() (objectType btypes.ObjectType, instance btypes.ObjectInstance) {
-	var value uint32
-	d.decode(&value)
+	value := d.decodeUint32()
 	objectType = btypes.ObjectType((value >> InstanceBits) & MaxObject)
 	instance = btypes.ObjectInstance(value & MaxInstance)
 	return

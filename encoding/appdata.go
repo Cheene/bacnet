@@ -51,19 +51,19 @@ func (e *Encoder) boolean(x bool) {
 }
 
 func (e *Encoder) real(x float32) {
-	e.write(x)
+	e.writeFloat32(x)
 }
 
 func (d *Decoder) real(x *float32) {
-	d.decode(x)
+	*x = d.decodeFloat32()
 }
 
 func (e *Encoder) double(x float64) {
-	e.write(x)
+	e.writeFloat64(x)
 }
 
 func (d *Decoder) double(x *float64) {
-	d.decode(x)
+	*x = d.decodeFloat64()
 }
 
 func (e *Encoder) AppData(i interface{}, typeBVBO bool) error {

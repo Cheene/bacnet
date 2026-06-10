@@ -68,228 +68,198 @@ func main() {
 }
 ```
 
-### Read Point Value (Analog Input)
+---
+
+## Data Collection Flow (采集流程)
+
+The BACnet data collection process consists of six key steps:
+
+### Step 1: Client Initialization
+
+Before any communication can occur, a BACnet client must be created with appropriate network configuration.
 
 ```go
-// Read the present value of an analog input point (AI-1)
-func readAnalogInput(client bacnet.Client, device btypes.Device) {
-    result, err := client.ReadProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.AnalogInput, // Object type: Analog Input
-                Instance: 1,                  // Point number: AI-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue, // Read present value
-                    ArrayIndex: btypes.ArrayAll,
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("Failed to read AI-1: %v", err)
-        return
-    }
-
-    // Get the value
-    if len(result.Object.Properties) > 0 {
-        fmt.Printf("AI-1 Present Value: %v\n", result.Object.Properties[0].Data)
-    }
+client, err := bacnet.NewClient(&bacnet.ClientBuilder{
+    Ip:         "192.168.1.100",  // Local IP address
+    SubnetCIDR: 24,                // Subnet mask (e.g., /24)
+    Port:       47808,             // BACnet port (default: 47808)
+})
+if err != nil {
+    log.Fatal(err)
 }
+defer client.Close()
 ```
 
-### Read Binary Input Point
+**Configuration Options:**
+- `Ip`: Local IP address to bind to
+- `Interface`: Network interface name (alternative to Ip)
+- `SubnetCIDR`: Subnet CIDR notation (e.g., 24 for 255.255.255.0)
+- `Port`: BACnet UDP port (default: 47808 = 0xBAC0)
+- `MaxPDU`: Maximum PDU size (default: 1476)
+
+### Step 2: Start Message Loop
+
+The client message loop must be started in a goroutine to handle incoming messages:
 
 ```go
-// Read the present value of a binary input point (BI-1)
-func readBinaryInput(client bacnet.Client, device btypes.Device) {
-    result, err := client.ReadProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.BinaryInput, // Object type: Binary Input
-                Instance: 1,                  // Point number: BI-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue,
-                    ArrayIndex: btypes.ArrayAll,
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("Failed to read BI-1: %v", err)
-        return
-    }
-
-    if len(result.Object.Properties) > 0 {
-        value := result.Object.Properties[0].Data
-        state := "OFF"
-        if value == true || value == uint8(1) {
-            state = "ON"
-        }
-        fmt.Printf("BI-1 Present Value: %s (%v)\n", state, value)
-    }
-}
+go client.ClientRun()
 ```
 
-### Write Point Value (Analog Output)
+**Important Notes:**
+- Must be called before making any requests
+- Runs continuously until the client is closed
+- Handles message decoding and routing
+
+### Step 3: Device Discovery (WhoIs)
+
+Discover BACnet devices on the network using the WhoIs service:
 
 ```go
-// Write a value to an analog output point (AO-1)
-func writeAnalogOutput(client bacnet.Client, device btypes.Device, value float64) error {
-    err := client.WriteProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.AnalogOutput, // Object type: Analog Output
-                Instance: 1,                   // Point number: AO-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue,
-                    ArrayIndex: btypes.ArrayAll,
-                    Data:       value,             // Value to write (e.g., 25.5)
-                    Priority:   btypes.Normal,    // Priority level
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("Failed to write AO-1: %v", err)
-        return err
-    }
-
-    fmt.Printf("Successfully wrote %.2f to AO-1\n", value)
-    return nil
-}
+devices, err := client.WhoIs(&bacnet.WhoIsOpts{
+    Low:  0,             // Device ID lower bound
+    High: 4194304,       // Device ID upper bound (max)
+})
 ```
 
-### Write Binary Output Point
+**Discovery Options:**
+- `Low`: Lower bound of device ID range (0 to 4194304)
+- `High`: Upper bound of device ID range
+- `GlobalBroadcast`: Use global broadcast address (0xFFFF)
+- `Destination`: Specific target address for unicast discovery
+
+**Best Practices:**
+- Use narrow ID ranges for targeted discovery to reduce network traffic
+- Avoid using full range (0-4194304) on large networks
+- Cache discovered devices to avoid repeated discovery
+
+### Step 4: Object Discovery
+
+Retrieve all objects from a discovered device:
 
 ```go
-// Write a value to a binary output point (BO-1)
-func writeBinaryOutput(client bacnet.Client, device btypes.Device, value bool) error {
-    err := client.WriteProperty(device, btypes.PropertyData{
-        Object: btypes.Object{
-            ID: btypes.ObjectID{
-                Type:     btypes.BinaryOutput, // Object type: Binary Output
-                Instance: 1,                   // Point number: BO-1
-            },
-            Properties: []btypes.Property{
-                {
-                    Type:       btypes.PropPresentValue,
-                    ArrayIndex: btypes.ArrayAll,
-                    Data:       value,           // true = ON, false = OFF
-                    Priority:   btypes.Normal,   // Priority level
-                },
-            },
-        },
-    })
-    if err != nil {
-        log.Printf("Failed to write BO-1: %v", err)
-        return err
-    }
-
-    fmt.Printf("Successfully wrote %v to BO-1\n", value)
-    return nil
+scannedDevice, err := client.Objects(devices[0])
+if err != nil {
+    log.Printf("Failed to scan objects: %v", err)
+    return
 }
+
+// Access specific object types
+aiObjects := scannedDevice.Objects[btypes.AnalogInput]
+biObjects := scannedDevice.Objects[btypes.BinaryInput]
+aoObjects := scannedDevice.Objects[btypes.AnalogOutput]
+boObjects := scannedDevice.Objects[btypes.BinaryOutput]
 ```
 
-### Read Multiple Properties at Once
+**Supported Object Types:**
+- `AnalogInput` (0): Analog input points (e.g., temperature sensors)
+- `AnalogOutput` (1): Analog output points (e.g., valves, dampers)
+- `AnalogValue` (2): Analog value objects
+- `BinaryInput` (3): Binary input points (e.g., contact sensors)
+- `BinaryOutput` (4): Binary output points (e.g., relays)
+- `BinaryValue` (5): Binary value objects
+- `Device` (8): BACnet device objects
+- `MultiStateInput` (13): Multi-state input points
+- `MultiStateOutput` (14): Multi-state output points
+- `TrendLog` (20): Trend log objects
+
+### Step 5: Data Reading
+
+Read property values from device objects.
+
+#### Read Single Property
 
 ```go
-// Read multiple properties from multiple objects in one request
-func readMultiplePoints(client bacnet.Client, device btypes.Device) {
-    result, err := client.ReadMultiProperty(device, btypes.MultiplePropertyData{
-        Objects: []btypes.Object{
-            // Read AI-1 present value and units
+result, err := client.ReadProperty(device, btypes.PropertyData{
+    Object: btypes.Object{
+        ID: btypes.ObjectID{
+            Type:     btypes.AnalogInput,
+            Instance: 1,
+        },
+        Properties: []btypes.Property{
             {
-                ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 1},
-                Properties: []btypes.Property{
-                    {Type: btypes.PropPresentValue},
-                    {Type: btypes.PropUnits},
-                },
-            },
-            // Read AI-2 present value
-            {
-                ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 2},
-                Properties: []btypes.Property{
-                    {Type: btypes.PropPresentValue},
-                },
-            },
-            // Read BI-1 present value
-            {
-                ID: btypes.ObjectID{Type: btypes.BinaryInput, Instance: 1},
-                Properties: []btypes.Property{
-                    {Type: btypes.PropPresentValue},
-                },
+                Type:       btypes.PropPresentValue,
+                ArrayIndex: btypes.ArrayAll,
             },
         },
-    })
-    if err != nil {
-        log.Printf("Failed to read multiple properties: %v", err)
-        return
-    }
-
-    // Process results
-    for _, obj := range result.Objects {
-        fmt.Printf("Object: %s-%d\n", obj.ID.Type, obj.ID.Instance)
-        for _, prop := range obj.Properties {
-            fmt.Printf("  %s: %v\n", prop.Type, prop.Data)
-        }
-    }
-}
+    },
+})
 ```
 
-### Scan All Objects in Device
+#### Read Multiple Properties (Batch)
+
+For better performance, use ReadMultiProperty to read multiple properties in one request:
 
 ```go
-// Scan all objects in a device
-func scanDeviceObjects(client bacnet.Client, device btypes.Device) error {
-    // Get all objects from the device
-    scannedDevice, err := client.Objects(device)
-    if err != nil {
-        return fmt.Errorf("failed to scan objects: %v", err)
-    }
-
-    fmt.Printf("Found %d objects in device %d\n", scannedDevice.Objects.Len(), device.DeviceID)
-
-    // Iterate through all object types
-    objectTypes := []btypes.ObjectType{
-        btypes.AnalogInput,
-        btypes.AnalogOutput,
-        btypes.AnalogValue,
-        btypes.BinaryInput,
-        btypes.BinaryOutput,
-        btypes.BinaryValue,
-    }
-
-    for _, objType := range objectTypes {
-        objects := scannedDevice.Objects[objType]
-        if len(objects) == 0 {
-            continue
-        }
-
-        fmt.Printf("\n%s objects:\n", objType)
-        for instance, obj := range objects {
-            fmt.Printf("  Instance %d: Name=%q\n", instance, obj.Name)
-        }
-    }
-
-    return nil
-}
+result, err := client.ReadMultiProperty(device, btypes.MultiplePropertyData{
+    Objects: []btypes.Object{
+        {
+            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 1},
+            Properties: []btypes.Property{
+                {Type: btypes.PropPresentValue},
+                {Type: btypes.PropUnits},
+                {Type: btypes.PropDescription},
+            },
+        },
+        {
+            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 2},
+            Properties: []btypes.Property{
+                {Type: btypes.PropPresentValue},
+            },
+        },
+    },
+})
 ```
 
-### Complete Device Integration Flow
+**Common Properties:**
+- `PropPresentValue` (85): Current value of the object
+- `PropUnits` (117): Engineering units
+- `PropDescription` (28): Object description
+- `PropObjectName` (77): Object name
+- `PropObjectType` (79): Object type
+- `PropObjectIdentifier` (75): Object identifier
+- `PropObjectList` (76): List of objects in device
+
+### Step 6: Data Writing
+
+Write values to device objects.
 
 ```go
-// Complete flow: Discover device -> Scan objects -> Read value -> Write value
+err := client.WriteProperty(device, btypes.PropertyData{
+    Object: btypes.Object{
+        ID: btypes.ObjectID{
+            Type:     btypes.AnalogOutput,
+            Instance: 1,
+        },
+        Properties: []btypes.Property{
+            {
+                Type:       btypes.PropPresentValue,
+                ArrayIndex: btypes.ArrayAll,
+                Data:       float64(25.5),
+                Priority:   btypes.Normal,
+            },
+        },
+    },
+})
+```
+
+**Write Priority Levels:**
+- `LifeSafety` (3): Life safety operations
+- `CriticalEquipment` (2): Critical equipment control
+- `Urgent` (1): Urgent operations
+- `Normal` (0): Normal operations
+
+---
+
+## Advanced Usage
+
+### Complete Integration Flow
+
+```go
 func completeIntegration(client bacnet.Client) error {
     // Step 1: Discover devices
     devices, err := client.WhoIs(&bacnet.WhoIsOpts{
-        Low:  2228316,
-        High: 2228316,
+        Low:  0,
+        High: 4194304,
     })
     if err != nil {
         return fmt.Errorf("whois failed: %v", err)
@@ -309,9 +279,9 @@ func completeIntegration(client bacnet.Client) error {
 
     // Step 3: Find target point
     aiObjects := scannedDevice.Objects[btypes.AnalogInput]
-    targetPoint, ok := aiObjects[0] // AnalogInput:0
+    targetPoint, ok := aiObjects[1]
     if !ok {
-        return fmt.Errorf("target point AnalogInput:0 not found")
+        return fmt.Errorf("target point not found")
     }
     fmt.Printf("Found target point: %s\n", targetPoint.Name)
 
@@ -320,7 +290,7 @@ func completeIntegration(client bacnet.Client) error {
         Object: btypes.Object{
             ID: btypes.ObjectID{
                 Type:     btypes.AnalogInput,
-                Instance: 0,
+                Instance: 1,
             },
             Properties: []btypes.Property{
                 {Type: btypes.PropPresentValue},
@@ -357,6 +327,48 @@ func completeIntegration(client bacnet.Client) error {
     return nil
 }
 ```
+
+### Read with Timeout
+
+Use timeout variants for better control over request timing:
+
+```go
+result, err := client.ReadPropertyWithTimeout(device, propertyData, 5*time.Second)
+```
+
+### Error Handling Patterns
+
+```go
+func safeReadProperty(client bacnet.Client, device btypes.Device, objID btypes.ObjectID) (interface{}, error) {
+    result, err := client.ReadProperty(device, btypes.PropertyData{
+        Object: btypes.Object{
+            ID: objID,
+            Properties: []btypes.Property{
+                {Type: btypes.PropPresentValue},
+            },
+        },
+    })
+    
+    if err != nil {
+        // Handle specific error types
+        if strings.Contains(err.Error(), "timeout") {
+            return nil, fmt.Errorf("device %d did not respond", device.DeviceID)
+        }
+        if strings.Contains(err.Error(), "no such object") {
+            return nil, fmt.Errorf("object %s not found", objID.Type)
+        }
+        return nil, err
+    }
+    
+    if len(result.Object.Properties) == 0 {
+        return nil, fmt.Errorf("no properties returned")
+    }
+    
+    return result.Object.Properties[0].Data, nil
+}
+```
+
+---
 
 ## API Reference
 
@@ -401,386 +413,7 @@ type WhoIsOpts struct {
 }
 ```
 
-### Property Reading
-
-```go
-// Read a single property from a device
-result, err := client.ReadProperty(device, btypes.PropertyData{
-    Object: btypes.Object{
-        ID: btypes.ObjectID{
-            Type:     btypes.AnalogInput,
-            Instance: 1,
-        },
-        Properties: []btypes.Property{
-            {
-                Type:       btypes.PropPresentValue,
-                ArrayIndex: btypes.ArrayAll,
-            },
-        },
-    },
-})
-
-// Read multiple properties from multiple objects
-result, err := client.ReadMultiProperty(device, btypes.MultiplePropertyData{
-    Objects: []btypes.Object{
-        {
-            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 1},
-            Properties: []btypes.Property{
-                {Type: btypes.PropPresentValue},
-                {Type: btypes.PropUnits},
-            },
-        },
-        {
-            ID: btypes.ObjectID{Type: btypes.AnalogInput, Instance: 2},
-            Properties: []btypes.Property{
-                {Type: btypes.PropPresentValue},
-            },
-        },
-    },
-})
-```
-
-### Property Writing
-
-```go
-// Write a property to a device
-err := client.WriteProperty(device, btypes.PropertyData{
-    Object: btypes.Object{
-        ID: btypes.ObjectID{
-            Type:     btypes.AnalogOutput,
-            Instance: 1,
-        },
-        Properties: []btypes.Property{
-            {
-                Type:       btypes.PropPresentValue,
-                ArrayIndex: btypes.ArrayAll,
-                Data:       float64(25.5),
-                Priority:   btypes.Normal,
-            },
-        },
-    },
-})
-```
-
-## Internal Architecture & Call Flow
-
-### 1. Client Initialization Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     NewClient()                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Validate IP Address                                         │
-│     └─ validation.ValidIP(ip)                                   │
-│                                                                 │
-│  2. Validate Port (default: 47808)                              │
-│     └─ validation.ValidPort(port)                               │
-│                                                                 │
-│  3. Create DataLink Layer                                       │
-│     ├─ NewUDPDataLink(iface, port)         // by interface      │
-│     └─ NewUDPDataLinkFromIP(ip, subnet, port) // by IP          │
-│                                                                 │
-│  4. Initialize TSM (Transaction State Machine)                  │
-│     └─ tsm.New(defaultStateSize)                                │
-│                                                                 │
-│  5. Initialize UTSM (Unconfirmed TSM)                           │
-│     └─ utsm.NewManager(...)                                     │
-│                                                                 │
-│  6. Create Buffer Pool                                          │
-│     └─ sync.Pool for receive buffers                            │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 2. WhoIs Device Discovery Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     WhoIs()                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Determine Broadcast Destination                             │
-│     ├─ GetBroadcastAddress()                                    │
-│     └─ Override with custom destination if provided             │
-│                                                                 │
-│  2. Encode NPDU (Network Protocol Data Unit)                    │
-│     ├─ Version: 1                                               │
-│     ├─ Destination: Broadcast address                           │
-│     ├─ Source: Local address                                    │
-│     └─ ExpectingReply: false (broadcast)                        │
-│                                                                 │
-│  3. Encode WhoIs Service Data                                   │
-│     ├─ Low device ID                                            │
-│     └─ High device ID                                           │
-│                                                                 │
-│  4. Subscribe to UTSM for IAm responses                         │
-│     └─ utsm.Subscribe(start, end)                               │
-│                                                                 │
-│  5. Send Broadcast Request (async)                              │
-│     └─ go c.Send(dest, npdu, data, nil)                         │
-│                                                                 │
-│  6. Collect and Deduplicate Responses                           │
-│     ├─ Filter IAm responses                                     │
-│     ├─ Deduplicate by device instance ID                        │
-│     └─ Build device list                                        │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 3. ReadProperty Flow (Confirmed Service)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     ReadProperty()                              │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Get Transaction ID from TSM                                 │
-│     └─ tsm.ID(ctx)                                              │
-│                                                                 │
-│  2. Build NPDU                                                  │
-│     ├─ Destination: Device address                              │
-│     ├─ Source: Local address                                    │
-│     └─ ExpectingReply: true                                     │
-│                                                                 │
-│  3. Encode APDU (Confirmed Service Request)                     │
-│     ├─ DataType: ConfirmedServiceRequest                        │
-│     ├─ Service: ServiceConfirmedReadProperty                    │
-│     ├─ InvokeId: Transaction ID                                 │
-│     └─ Service Data: Object ID + Property ID                    │
-│                                                                 │
-│  4. Send Request with Retry                                     │
-│     ├─ c.Send(dest, npdu, data, nil)                            │
-│     ├─ tsm.Receive(id, timeout)                                 │
-│     └─ Retry up to retryCount times                             │
-│                                                                 │
-│  5. Decode Response                                             │
-│     ├─ Decode APDU header                                       │
-│     ├─ Check for errors                                         │
-│     └─ Decode property value                                    │
-│                                                                 │
-│  6. Release Transaction ID                                      │
-│     └─ tsm.Put(id)                                              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 4. WriteProperty Flow (Confirmed Service)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     WriteProperty()                             │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Get Transaction ID from TSM                                 │
-│     └─ tsm.ID(ctx)                                              │
-│                                                                 │
-│  2. Build NPDU                                                  │
-│     ├─ Destination: Device address                              │
-│     ├─ Source: Local address                                    │
-│     └─ ExpectingReply: true                                     │
-│                                                                 │
-│  3. Encode APDU (Confirmed Service Request)                     │
-│     ├─ DataType: ConfirmedServiceRequest                        │
-│     ├─ Service: ServiceConfirmedWriteProperty                   │
-│     ├─ InvokeId: Transaction ID                                 │
-│     └─ Service Data: Object ID + Property ID + Value            │
-│                                                                 │
-│  4. Send Request with Retry                                     │
-│     ├─ c.Send(dest, npdu, data, nil)                            │
-│     ├─ tsm.Receive(id, timeout)                                 │
-│     └─ Retry up to 2 times                                      │
-│                                                                 │
-│  5. Decode Response                                             │
-│     ├─ Decode APDU header                                       │
-│     ├─ Check for SimpleAck (success)                            │
-│     └─ Check for Error PDU                                      │
-│                                                                 │
-│  6. Release Transaction ID                                      │
-│     └─ tsm.Put(id)                                              │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 5. Message Reception Flow
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     ClientRun()                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  Loop:                                                          │
-│  1. Get buffer from pool                                        │
-│     └─ readBufferPool.Get()                                     │
-│                                                                 │
-│  2. Receive data from DataLink                                  │
-│     └─ dataLink.Receive(buffer)                                 │
-│                                                                 │
-│  3. Handle message concurrently                                 │
-│     └─ go handleMsg(addr, data)                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     handleMsg()                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Decode BVLC (BACnet Virtual Link Control)                   │
-│     ├─ Type: BVLCTypeBacnetIP                                   │
-│     ├─ Function: Broadcast/Unicast/ForwardedNPDU                │
-│     └─ Length: Packet length                                    │
-│                                                                 │
-│  2. Decode NPDU                                                 │
-│     ├─ Version                                                  │
-│     ├─ Source/Destination addresses                             │
-│     └─ Network layer message handling                           │
-│                                                                 │
-│  3. Decode APDU and Route to Handler                            │
-│     ├─ UnconfirmedServiceRequest                                │
-│     │   ├─ IAm → utsm.Publish()                                 │
-│     │   └─ WhoIs → (ignore or respond)                          │
-│     ├─ SimpleAck → tsm.Send()                                   │
-│     ├─ ComplexAck → tsm.Send()                                  │
-│     ├─ ConfirmedServiceRequest → tsm.Send()                     │
-│     └─ Error → tsm.Send(error)                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 6. Transaction State Machine (TSM)
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     TSM Architecture                            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐      │
-│   │   Caller    │────▶│  TSM.ID()   │────▶│   State     │      │
-│   │  (Request)  │     │  (Get ID)   │     │  (Active)   │      │
-│   └─────────────┘     └─────────────┘     └──────┬──────┘      │
-│                                                  │              │
-│                                                  ▼              │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐      │
-│   │   Caller    │◀────│ TSM.Put()   │◀────│   State     │      │
-│   │  (Cleanup)  │     │ (Release)   │     │ (Complete)  │      │
-│   └─────────────┘     └─────────────┘     └─────────────┘      │
-│                                                  ▲              │
-│                                                  │              │
-│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐      │
-│   │   handleMsg │────▶│ TSM.Send()  │────▶│   Data      │      │
-│   │  (Response) │     │ (Deliver)   │     │  Channel    │      │
-│   └─────────────┘     └─────────────┘     └─────────────┘      │
-│                                                                 │
-│  Key Components:                                                │
-│  - states: map[int]*state (active transactions)                 │
-│  - free.id: channel (available invoke IDs 1-254)                │
-│  - free.space: channel (concurrent transaction limit)           │
-│  - pool: sync.Pool (state object reuse)                         │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 7. Protocol Stack Layering
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Application Layer                            │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Services: WhoIs, IAm, ReadProperty, WriteProperty      │   │
-│  │  Objects: Device, AnalogInput, BinaryOutput, etc.       │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                   Presentation Layer                            │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Encoder: APDU, NPDU, BVLC encoding                     │   │
-│  │  Decoder: APDU, NPDU, BVLC decoding                     │   │
-│  │  Types: ObjectID, Property, Address                     │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                     Network Layer                               │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  NPDU: Network Protocol Data Unit                       │   │
-│  │  - Source/Destination addressing                        │   │
-│  │  - Hop count, priority, network numbers                 │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                   Data Link Layer                               │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  BVLC: BACnet Virtual Link Control                      │   │
-│  │  UDP:  UDP socket communication                         │   │
-│  │  MS/TP: Master-Slave/Token-Pass (optional)              │   │
-│  └─────────────────────────────────────────────────────────┘   │
-├─────────────────────────────────────────────────────────────────┤
-│                    Physical Layer                               │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │  Ethernet/IP network                                      │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## Supported BACnet Services
-
-### Confirmed Services
-- ReadProperty (12)
-- ReadPropertyMultiple (14)
-- WriteProperty (15)
-- WritePropertyMultiple (16)
-
-### Unconfirmed Services
-- IAm (0)
-- WhoIs (8)
-
-## Object Types
-
-| Type | Code | Description |
-|------|------|-------------|
-| AnalogInput | 0 | Analog input point |
-| AnalogOutput | 1 | Analog output point |
-| AnalogValue | 2 | Analog value |
-| BinaryInput | 3 | Binary input point |
-| BinaryOutput | 4 | Binary output point |
-| BinaryValue | 5 | Binary value |
-| Device | 8 | BACnet device |
-| MultiStateInput | 13 | Multi-state input |
-| MultiStateOutput | 14 | Multi-state output |
-| TrendLog | 20 | Trend log |
-
-## Property Types (Common)
-
-| Property | Code | Description |
-|----------|------|-------------|
-| PresentValue | 85 | Current value of the object |
-| Units | 117 | Engineering units |
-| Description | 28 | Object description |
-| ObjectName | 77 | Object name |
-| ObjectType | 79 | Object type |
-| ObjectIdentifier | 75 | Object identifier |
-| ObjectList | 76 | List of objects in device |
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Application Layer                       │
-│  WhoIs | ReadProperty | WriteProperty | Objects            │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Presentation Layer                      │
-│           Encoder / Decoder (APDU/NPDU/BVLC)               │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Network Layer                          │
-│              Addressing, Routing, Priority                  │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Data Link Layer                          │
-│                    UDP / MS/TP                             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Transaction Management
-
-### TSM (Transaction State Machine)
-Handles confirmed services that require acknowledgment. Uses channel-based communication for request/response matching.
-
-### UTSM (Unconfirmed Transaction State Machine)
-Handles unconfirmed services like WhoIs/IAm. Uses publish/subscribe pattern for broadcast responses.
+---
 
 ## Configuration
 
@@ -797,7 +430,7 @@ type ClientBuilder struct {
 }
 ```
 
-## Constants
+### Constants
 
 ```go
 // Protocol
@@ -817,47 +450,31 @@ const (
 )
 ```
 
-## Usage Notes
+---
+
+## Best Practices & Recommendations
 
 ### Network Considerations
 
-1. **Port Binding**: 
+1. **Port Binding**:
    - Default BACnet port is 47808 (0xBAC0)
-   - When testing with a simulator on the same machine, use different ports for discovery and confirmed services to avoid port conflicts
-   - Example: Use port 47808 for WhoIs discovery, then switch to 47809 for ReadProperty/WriteProperty operations
+   - Use different ports for testing to avoid conflicts
+   - Bind to `0.0.0.0` to listen on all interfaces
 
 2. **IP Address Binding**:
-   - Bind to `0.0.0.0` to listen on all interfaces
    - Avoid binding to the target device's IP address
-   - For multi-subnet environments, ensure proper subnet CIDR configuration
+   - For multi-subnet environments, configure subnet CIDR properly
 
 3. **Broadcast Behavior**:
    - WhoIs uses broadcast by default
-   - Use `WhoIsOpts.Destination` for unicast WhoIs requests
+   - Use `Destination` for unicast requests
    - Broadcast may not work across VLANs or subnets
 
-### Error Handling
-
-1. **Timeout Handling**:
-   - Use `ReadPropertyWithTimeout` for explicit timeout control
-   - Confirmed services include retry logic with exponential backoff
-   - Unconfirmed services have no retry mechanism
-
-2. **Common Errors**:
-   - `timeout`: Device did not respond within the timeout period
-   - `invalid argument`: Invalid object type or property ID
-   - `no such object`: Requested object does not exist on the device
-   - `access denied`: Insufficient permissions for write operations
-
-3. **Retry Strategy**:
-   - Confirmed services are retried up to 2 times by default
-   - Consider implementing application-level retry for critical operations
-
-### Performance Considerations
+### Performance Optimization
 
 1. **Batch Operations**:
-   - Use `ReadMultiProperty` for reading multiple properties at once
-   - This reduces network round-trips and improves performance
+   - Use `ReadMultiProperty` for reading multiple properties
+   - Reduce network round-trips
    - Limit batch size based on device's MaxAPDU setting
 
 2. **Concurrency**:
@@ -869,22 +486,76 @@ const (
    - Use buffer pool for efficient memory usage
    - Release resources promptly with `client.Close()`
 
-### Best Practices
+### Error Handling
 
-1. **Client Lifecycle**:
-   - Always use `defer client.Close()` to release resources
-   - Start `client.ClientRun()` in a goroutine before making requests
-   - Verify `client.IsRunning()` before sending requests
+1. **Timeout Handling**:
+   - Use `ReadPropertyWithTimeout` for explicit timeout control
+   - Confirmed services include retry logic with exponential backoff
+   - Implement application-level retry for critical operations
 
-2. **Device Communication**:
-   - Cache device addresses after discovery
-   - Validate device responses for expected data types
-   - Handle device reboots and network interruptions gracefully
+2. **Common Errors**:
+   - `timeout`: Device did not respond within timeout
+   - `invalid argument`: Invalid object type or property ID
+   - `no such object`: Requested object does not exist
+   - `access denied`: Insufficient permissions for write operations
 
-3. **Testing**:
-   - Use the provided integration test (`TestRealDeviceAcceptanceFlow`) for validation
-   - Test with both real devices and simulators
-   - Monitor response times and error rates in production
+---
+
+## Common Issues & Troubleshooting
+
+### Issue 1: No Devices Discovered
+
+**Possible Causes:**
+- Incorrect IP address or subnet configuration
+- Firewall blocking BACnet port (47808)
+- Devices on different VLAN/subnet
+- Client not running (`ClientRun()` not called)
+
+**Solutions:**
+- Verify network configuration
+- Check firewall rules
+- Use Wireshark to monitor BACnet traffic
+- Ensure `ClientRun()` is called before `WhoIs()`
+
+### Issue 2: ReadProperty Fails with Timeout
+
+**Possible Causes:**
+- Device not responding
+- Incorrect device address
+- Network connectivity issues
+- Device busy or overloaded
+
+**Solutions:**
+- Verify device is reachable via ping
+- Check device address (some devices use different ports for confirmed services)
+- Increase timeout value
+- Implement retry logic
+
+### Issue 3: WriteProperty Returns "Access Denied"
+
+**Possible Causes:**
+- Insufficient permissions
+- Write protection enabled on device
+- Incorrect priority level
+
+**Solutions:**
+- Check device configuration for write permissions
+- Verify priority level (use appropriate priority)
+- Contact device manufacturer for access rights
+
+### Issue 4: High Network Traffic
+
+**Possible Causes:**
+- Frequent WhoIs requests with full ID range
+- Large batch operations exceeding MTU
+- Broadcast storms
+
+**Solutions:**
+- Use targeted WhoIs with narrow ID ranges
+- Limit batch size to stay within MaxAPDU
+- Implement device discovery caching
+
+---
 
 ## Testing
 
