@@ -1,7 +1,7 @@
 # BACnet Object Scan 真机测试报告
 
-**日期**: 2026-05-13  
-**测试程序**: `cmd/main.go`  
+**日期**: 2026-06-11  
+**测试程序**: `test/main_test.go`  
 **测试目标**: 对物理设备执行 Object 扫描,读写功能的系统性验证
 
 ---
@@ -10,11 +10,11 @@
 
 | 项目 | 值 |
 |------|-----|
-| 测试日期 | 2026-05-13 |
+| 测试日期 | 2026-06-11 |
 | 操作系统 | Windows (PowerShell) |
 | Go 版本 | 1.26 |
 | 目标设备 ID | 2228316 |
-| 目标设备 IP | 192.168.3.113 |
+| 目标设备 IP | 192.168.3.114 |
 | 目标设备端口 | 47808  I-Am 返回 57304 |
 | 目标点位名称 | Temperature.Indoor |
 | 目标点位类型 | AnalogInput (AI:0) |
@@ -27,7 +27,7 @@
 ### 2.1 程序位置
 
 ```
-创建 d:\code\GitHub\bacnet\cmd\main.go 测试下面全部四个流程
+创建 d:\code\GitHub\bacnet\test\main_test.go 测试下面全部四个流程
 
 可以参考 D:\code\GitHub\bacnet\test\bacnet.go 代码相关实现
 ```
@@ -92,7 +92,7 @@ Phase 4: 值写入 (WriteProperty) ──失败──▶ 终止
 **配置参数**:
 ```go
 bacnet.ClientBuilder{
-    Ip:         "192.168.3.113",
+    Ip:         "192.168.3.114",
     Port:       47808,
     SubnetCIDR: 24,
     MaxPDU:     1476,
@@ -123,8 +123,8 @@ bacnet.ClientBuilder{
 **预期输出**:
 ```
 [Phase 1] 设备发现阶段 - WhoIs 扫描设备 ID: 2228316
-  发现设备 [1]: ID=2228316, IP=192.168.3.113:47808, MaxAPDU=1476, Segmentation=0, Vendor=xxx
-[Phase 1] ✅ 设备发现成功! ID=2228316, IP=192.168.3.113:47808 (耗时: ~2.5s)
+  发现设备 [1]: ID=2228316, IP=192.168.3.114:47808, MaxAPDU=1476, Segmentation=0, Vendor=xxx
+[Phase 1] ✅ 设备发现成功! ID=2228316, IP=192.168.3.114:47808 (耗时: ~2.5s)
 ```
 
 **成功条件**: `devices` 列表中存在 DeviceID == 2228316 的设备
@@ -217,7 +217,7 @@ bacnet.ClientBuilder{
   测试结果汇总
 ==========================================================
   [1] ✅ PASS - 设备发现 (耗时: 2.5s)
-      详情: 成功发现设备 ID=2228316, IP=192.168.3.113:47808, MaxAPDU=1476, Vendor=xxx
+      详情: 成功发现设备 ID=2228316, IP=192.168.3.114:47808, MaxAPDU=1476, Vendor=xxx
   [2] ✅ PASS - 点位发现 (耗时: 5.2s)
       详情: AnalogInput:0, Name="Temperature.Indoor", NameMatch=true, 共发现 15 个对象
   [3] ✅ PASS - 点位值读取 (耗时: 0.8s)
@@ -235,7 +235,7 @@ bacnet.ClientBuilder{
 执行全面的真机测试流程，确保所有基本测试项均通过验证，具体要求如下：
 
 1. 测试环境配置均正常工作：
-   - IP地址192.168.3.113
+   - IP地址192.168.3.114
    - 测试设备与目标设备2228316之间网络稳定 且第三方扫描软件均正常工作
 
 2. 设备发现阶段测试：
@@ -333,7 +333,7 @@ bacnet.ClientBuilder{
 go test . -run TestRealDeviceAcceptanceFlow -count=1 -v
 
 # 运行命令行测试程序
-go run ./cmd/
+go run ./test/
 ```
 
 ---
@@ -342,18 +342,18 @@ go run ./cmd/
 
 ### 7.1 测试执行记录
 
-**测试执行时间**: 2026-05-14  
+**测试执行时间**: 2026-06-11  
 **测试命令**: `go test . -run TestRealDeviceAcceptanceFlow -count=1 -v`
 
 ### 7.2 各阶段测试结果
 
 | 阶段 | 状态 | 实际耗时 | 验证项 | 详细结果 |
 |------|------|----------|--------|----------|
-| Phase 0 | ✅ | ~500ms | 客户端初始化成功 | 发现客户端和确认客户端均初始化成功 |
-| Phase 1 | ✅ | ~6-10s | 设备发现3/3成功 | 成功发现设备 ID=2228316, IP=192.168.3.113:47808 |
-| Phase 2 | ✅ | ~1-5s | 扫描13个对象，找到目标点位 | AnalogInput:0, Name="Temperature.Indoor" |
-| Phase 3 | ✅ | ~10-11s | 连续读取10/10成功，平均RTT<300ms | 成功=10/10, 平均RTT=1ms, 最小RTT=0ms, 最大RTT=1ms |
-| Phase 4 | ✅ | ~1s | 写入3/3成功，Reliability=0 | 写入值=300，Reliability=0 (No Fault Detected) |
+| Phase 0 | ✅ | ~533ms | 客户端初始化成功 | 发现客户端和确认客户端均初始化成功 |
+| Phase 1 | ✅ | ~6-10s | 设备发现3/3成功 | 成功发现设备 ID=2228316, IP=192.168.3.114:47808 |
+| Phase 2 | ✅ | ~37ms | 扫描13个对象，找到目标点位 | AnalogInput:0, Name="Temperature.Indoor" |
+| Phase 3 | ✅ | ~10s | 连续读取10/10成功，平均RTT<300ms | 成功=10/10, 平均RTT=1ms, 最小RTT=0ms, 最大RTT=2ms |
+| Phase 4 | ✅ | ~16ms | 写入3/3成功，Reliability=0 | 写入值=300，Reliability=0 (No Fault Detected) |
 
 ### 7.3 测试结果汇总
 
@@ -363,8 +363,8 @@ go run ./cmd/
 ═══════════════════════════════════════════════════════════════
 
 【测试结果汇总】
-  ├─ 总耗时: 16.314s
-  ├─ 设备信息: ID=2228316, IP=192.168.3.113:47808
+  ├─ 总耗时: 16.386s
+  ├─ 设备信息: ID=2228316, IP=192.168.3.114:47808
   ├─ 读取点位: AnalogInput:0, Name="Temperature.Indoor"
   └─ 写入点位: AnalogValue:1, Name="Setpoint.1", Value=300
 
@@ -376,13 +376,13 @@ go run ./cmd/
 
 | 指标 | 值 |
 |------|-----|
-| 总耗时 | 16.314s |
+| 总耗时 | 16.386s |
 | 读取成功率 | 100% (10/10) |
 | 平均读取RTT | 1ms |
 | 最小读取RTT | 0ms |
-| 最大读取RTT | 1ms |
+| 最大读取RTT | 2ms |
 | 写入成功率 | 100% (3/3) |
-| 平均写入耗时 | 1ms |
+| 平均写入耗时 | 5ms |
 
 ### 7.5 测试结论
 

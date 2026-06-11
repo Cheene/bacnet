@@ -189,7 +189,7 @@ func realDeviceConfig() realDeviceTestConfig {
 		confirmedLocalPort:  47809,
 		subnetCIDR:          24,
 		targetDeviceID:      2228316,
-		targetIP:            "192.168.3.113",
+		targetIP:            "192.168.3.114",
 		targetPort:          47808,
 		targetPointName:     "Temperature.Indoor",
 		targetReadType:      btypes.AnalogInput,
