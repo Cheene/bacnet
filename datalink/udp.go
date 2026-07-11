@@ -6,7 +6,6 @@ import (
 	//"log"
 	"net"
 	"strings"
-	"syscall"
 
 	"github.com/anviod/bacnet/btypes"
 )
@@ -138,16 +137,7 @@ func dataLink(ipAddr string, port int) (DataLink, error) {
 	udpAddrStr := fmt.Sprintf("%s:%d", ip.String(), port)
 
 	lc := net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
-			var opErr error
-			err := c.Control(func(fd uintptr) {
-				opErr = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-			})
-			if err != nil {
-				return err
-			}
-			return opErr
-		},
+		Control: configureSocket,
 	}
 
 	conn, err := lc.ListenPacket(context.Background(), "udp4", udpAddrStr)
