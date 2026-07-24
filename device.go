@@ -117,6 +117,7 @@ type ClientBuilder struct {
 	Port       int               // BACnet port (default: 47808)
 	SubnetCIDR int               // Subnet CIDR (e.g., 24 for /24)
 	MaxPDU     uint16            // Maximum PDU size (default: 1476)
+	Debug      bool              // Enable debug logging (default: false)
 }
 
 // NewClient creates a new BACnet client with the provided configuration.
@@ -183,6 +184,9 @@ func NewClient(cb *ClientBuilder) (Client, error) {
 			return nil, err
 		}
 	}
+
+	// Configure log level based on Debug flag
+	log.SetLevel(cb.Debug)
 
 	cli := &client{
 		dataLink: dataLink,

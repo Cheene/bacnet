@@ -11,10 +11,10 @@ import (
 var Logger *zap.Logger
 
 func init() {
-	initLogger()
+	initLogger(zapcore.DebugLevel)
 }
 
-func initLogger() {
+func initLogger(level zapcore.Level) {
 	encoderCfg := zap.NewProductionEncoderConfig()
 	encoderCfg.TimeKey = "ts"
 	encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
@@ -23,9 +23,19 @@ func initLogger() {
 	core := zapcore.NewCore(
 		zapcore.NewJSONEncoder(encoderCfg),
 		zapcore.Lock(os.Stdout),
-		zapcore.DebugLevel,
+		level,
 	)
 	Logger = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(0))
+}
+
+// SetLevel sets the global logger to the specified level.
+// If debug is true, sets to DebugLevel; otherwise sets to InfoLevel.
+func SetLevel(debug bool) {
+	if debug {
+		initLogger(zapcore.DebugLevel)
+	} else {
+		initLogger(zapcore.InfoLevel)
+	}
 }
 
 // NewNop returns a no-op logger, useful for tests.

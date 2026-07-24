@@ -3,11 +3,12 @@ package bacnet
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/anviod/bacnet/btypes"
 	"github.com/anviod/bacnet/encoding"
+	log "github.com/anviod/bacnet/helpers/log"
+	"go.uber.org/zap"
 )
 
 // ReadProperty reads a single property from a single object in the given device.
@@ -35,11 +36,18 @@ func (c *client) ReadPropertyWithTimeout(device btypes.Device, rp btypes.Propert
 		Priority:              btypes.Normal,
 		HopCount:              btypes.DefaultHopCount,
 	}
-	log.Printf("[DEBUG] ReadProperty id=%d device=%s:%d dest.Mac=%v dest.MacLen=%d dest.Net=%d dest.Len=%d src.Mac=%v src.Net=%d rp.Object.ID=%v rp.Properties=%v",
-		id, device.Ip, device.Port,
-		device.Addr.Mac, device.Addr.MacLen, device.Addr.Net, device.Addr.Len,
-		srcAddr.Mac, srcAddr.Net,
-		rp.Object.ID, rp.Object.Properties)
+	log.Logger.Debug("ReadProperty",
+		zap.Int("id", id),
+		zap.String("device", fmt.Sprintf("%s:%d", device.Ip, device.Port)),
+		zap.Any("dest.Mac", device.Addr.Mac),
+		zap.Uint8("dest.MacLen", device.Addr.MacLen),
+		zap.Uint16("dest.Net", device.Addr.Net),
+		zap.Uint8("dest.Len", device.Addr.Len),
+		zap.Any("src.Mac", srcAddr.Mac),
+		zap.Uint16("src.Net", srcAddr.Net),
+		zap.Any("rp.Object.ID", rp.Object.ID),
+		zap.Any("rp.Properties", rp.Object.Properties),
+	)
 	enc.NPDU(npdu)
 
 	err = enc.ReadProperty(uint8(id), rp)
@@ -52,21 +60,36 @@ func (c *client) ReadPropertyWithTimeout(device btypes.Device, rp btypes.Propert
 	for count := 0; err != nil && count < retryCount; count++ {
 		var b []byte
 		var out btypes.PropertyData
-		log.Printf("[DEBUG] ReadProperty sending packet (id=%d, count=%d), enc.Bytes() len=%d", id, count, len(enc.Bytes()))
+		log.Logger.Debug("ReadProperty sending packet",
+			zap.Int("id", id),
+			zap.Int("count", count),
+			zap.Int("len", len(enc.Bytes())),
+		)
 		_, err = c.Send(device.Addr, npdu, enc.Bytes(), nil)
 		if err != nil {
-			log.Printf("[DEBUG] ReadProperty send error: %v", err)
+			log.Logger.Debug("ReadProperty send error",
+				zap.Error(err),
+			)
 			continue
 		}
-		log.Printf("[DEBUG] ReadProperty sent, waiting for response (id=%d, timeout=%v)...", id, timeout)
+		log.Logger.Debug("ReadProperty sent, waiting for response",
+			zap.Int("id", id),
+			zap.Duration("timeout", timeout),
+		)
 
 		var raw interface{}
 		raw, err = c.tsm.Receive(id, timeout)
 		if err != nil {
-			log.Printf("[DEBUG] ReadProperty receive error: %v (id=%d)", err, id)
+			log.Logger.Debug("ReadProperty receive error",
+				zap.Int("id", id),
+				zap.Error(err),
+			)
 			continue
 		}
-		log.Printf("[DEBUG] ReadProperty received response (id=%d, type=%T)", id, raw)
+		log.Logger.Debug("ReadProperty received response",
+			zap.Int("id", id),
+			zap.Any("type", fmt.Sprintf("%T", raw)),
+		)
 		switch v := raw.(type) {
 		case error:
 			return out, v

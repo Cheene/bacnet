@@ -3,11 +3,12 @@ package bacnet
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/anviod/bacnet/btypes"
 	"github.com/anviod/bacnet/encoding"
+	log "github.com/anviod/bacnet/helpers/log"
+	"go.uber.org/zap"
 )
 
 const maxReattempt = 2
@@ -105,7 +106,7 @@ func (c *client) sendReadMultipleProperty(id int, dev btypes.Device, npdu *btype
 	}
 	err = dec.ReadMultiplePropertyAck(&out)
 	if err != nil {
-		log.Printf("[DEBUG] WEIRD PACKET: %v: %v", err, b)
+		log.Logger.Debug("WEIRD PACKET", zap.Error(err), zap.Any("data", b))
 		return out, err
 	}
 	return out, err
